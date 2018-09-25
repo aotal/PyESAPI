@@ -9,7 +9,6 @@ import clr  # pip install pythonnet
 clr.AddReference('System.Windows')
 # clr.AddReference('System.Linq')
 # clr.AddReference('System.Collections')
-#clr.AddReference('VMS.TPS.Common.Model')
 clr.AddReference('VMS.TPS.Common.Model.API')
 
 # the bad stuff
@@ -20,6 +19,8 @@ from System.Collections.Generic import Dictionary
 # the good stuff
 from VMS.TPS.Common.Model.Types import *
 from VMS.TPS.Common.Model.API import *
+
+clr.AddReference('VMS.TPS.Common.Model')
 
 # for numpy array interfacing
 from System.Windows import Point
