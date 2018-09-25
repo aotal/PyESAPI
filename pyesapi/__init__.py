@@ -9,7 +9,7 @@ import clr  # pip install pythonnet
 clr.AddReference('System.Windows')
 # clr.AddReference('System.Linq')
 # clr.AddReference('System.Collections')
-#clr.AddReference('VMS.TPS.Common.Model')
+clr.AddReference('VMS.TPS.Common.Model')
 clr.AddReference('VMS.TPS.Common.Model.API')
 
 # the bad stuff
