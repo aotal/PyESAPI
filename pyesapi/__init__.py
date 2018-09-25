@@ -2,20 +2,14 @@ import sys
 import pythoncom
 pythoncom.CoInitialize()  # enforces single thread apartment mode
 
-# add 15.5 paths
-sys.path.append("C:\\Program Files (x86)\\Varian\\RTM\\15.5\\esapi\\API")
-sys.path.append("C:\\Program Files (x86)\\Varian\\RTM\\15.5\\ExternalBeam")
-
-# add 15.6 paths
-sys.path.append("C:\\Program Files (x86)\\Varian\\RTM\\15.6\\esapi\\API")
-sys.path.append("C:\\Program Files (x86)\\Varian\\RTM\\15.6\\ExternalBeam")
+sys.path.append("C:\\Users\\25166122M\\Documents\\Plugins\\lib\\Plugins\\")
 
 import clr  # pip install pythonnet
 
 clr.AddReference('System.Windows')
 # clr.AddReference('System.Linq')
 # clr.AddReference('System.Collections')
-clr.AddReference('VMS.TPS.Common.Model')
+#clr.AddReference('VMS.TPS.Common.Model')
 clr.AddReference('VMS.TPS.Common.Model.API')
 
 # the bad stuff
