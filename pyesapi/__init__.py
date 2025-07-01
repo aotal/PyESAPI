@@ -297,6 +297,124 @@ def set_fluence_nparray(beam, shaped_fluence, beamlet_size_mm=2.5):
     fluence = Fluence(_buffer, x_origin, y_origin)
     beam.SetOptimalFluence(fluence)
 
+def make_contour_mask_fast(structure_set, structure_obj, image_like):
+    '''Generate a 3D mask from structure contours on an image-like object grid (e.g., Dose or Image).
+    This function uses OpenCV to efficiently create a mask from the contours of a structure set.
+    However, it does not exactly match the segment volume represented in Eclipse. For a more accurate representation,
+    use the `np_mask_like` method of the structure object.
+
+    Args:
+        structure_set (pyesapi.StructureSet): The structure set containing the contours.
+        structure_obj (pyesapi.Structure): The specific structure to create a mask for.
+        image_like (pyesapi.Image or pyesapi.Dose): The image-like object that defines the grid for the mask.
+    Returns:
+        np.ndarray: A 3D boolean mask where True indicates the presence of the structure.
+    '''
+
+    # Import cv2 only when needed for mask generation
+    try:
+        import cv2
+    except ImportError:
+        raise ImportError("opencv-python is required for mask generation. Install with: pip install opencv-python")
+
+    x_res = image_like.XRes
+    y_res = image_like.YRes
+    z_res = image_like.ZRes
+
+    origin_x = image_like.Origin.x 
+    origin_y = image_like.Origin.y
+    origin_z = image_like.Origin.z
+    
+    nx = image_like.XSize
+    ny = image_like.YSize
+    nz = image_like.ZSize
+
+    total_volume_mm3 = 0
+    mask_3d = np.zeros((nz, ny, nx), dtype=bool)
+
+    all_contrours_per_source_slice = []    
+
+    # note: the CT data (source) can be different from the requested mask geometry (sample), so we use the StructureSet's Image geo directly to extract contours
+
+    # first loop over the Z slices of the structure set image and grab contours and signed areas
+    for source_z_idx in range(structure_set.Image.ZSize):
+
+        contours_on_slice = structure_obj.GetContoursOnImagePlane(source_z_idx)
+        if len(contours_on_slice) == 0:
+            all_contrours_per_source_slice.append(None)  # Append empty contours with zero area for each empty slice
+            continue
+
+        # Calculate total SIGNED area for the current slice z to handle holes
+        total_signed_area_on_slice_mm2 = 0.0
+        # For mask generation, collect all contour polygons on this slice
+        slice_polygons = []      
+        for contour_xyz in contours_on_slice:
+            if len(contour_xyz) < 3:
+                print(f"WARNING: Skipping contour with < 3 points on slice index {source_z_idx}")
+                continue
+
+            # contour_xy = ]contour_xyz[:, :2]  # Extract X, Y coordinates
+            x = np.array([v[0] for v in contour_xyz])
+            y = np.array([v[1] for v in contour_xyz])
+            
+            # Calculate SIGNED area using Shoelace formula
+            signed_area = - 0.5 * (np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))  # sign is flipped relative to this formulation
+            total_signed_area_on_slice_mm2 += signed_area
+            
+            # Store polygon for mask generation
+            slice_polygons.append((x, y, signed_area))
+
+        all_contrours_per_source_slice.append(slice_polygons)
+
+    # Loop over the Z slices of the requested mask geometry
+    for sample_z_idx in range(nz):
+        sample_z_position = sample_z_idx * z_res + origin_z
+
+        # Find the closest Z slice in the source image index space
+        source_z_idx = np.floor((sample_z_position - structure_set.Image.Origin.z)/structure_set.Image.ZRes).astype(int)
+        
+        # Only process if this Z sample slice is within the source z slices
+        if source_z_idx < structure_set.Image.ZSize and source_z_idx >= 0:
+            # Create mask for this slice
+            slice_mask = np.zeros((ny, nx), dtype=bool)
+            slice_polygons_list = all_contrours_per_source_slice[source_z_idx]
+            if slice_polygons_list is not None:
+                try:
+                    for x, y, signed_area in slice_polygons_list:  # Direct unpacking
+                        if len(x) == 0:
+                            continue
+                        # Convert contour to pixel coordinates using non-isotropic resolution
+                        contour_pixels = np.zeros((len(x), 2), dtype=np.int32)
+                        contour_pixels[:, 0] = np.round((x - origin_x) / x_res)  # x pixel coords
+                        contour_pixels[:, 1] = np.round((y - origin_y) / y_res) # y pixel coords
+                        
+                        # Create a temporary mask for this contour using cv2.fillPoly
+                        temp_mask = np.zeros((ny, nx), dtype=np.uint8)
+                        cv2.fillPoly(temp_mask, [contour_pixels], 1, lineType=cv2.LINE_8)
+                        temp_mask_bool = temp_mask.astype(bool)
+                        
+                        # Add or subtract based on winding direction (signed area)
+                        if signed_area > 0:  # Positive area - add to mask
+                            slice_mask |= temp_mask_bool
+                        else:  # Negative area - subtract from mask (hole)
+                            slice_mask &= ~temp_mask_bool
+                except Exception as e:
+                    # print(f"Error processing contour on slice {sample_z_idx} with source index {source_z_idx}: {e}")
+                    print(f"Contour data: {slice_polygons_list}")
+                    raise Exception(f"Failed to process contour on slice {sample_z_idx} with source index {source_z_idx}: {e}")
+            
+            mask_3d[sample_z_idx] = slice_mask
+
+        # The final net area for the slice is the absolute value of the sum of signed areas
+        # total_area_on_slice_mm2 = np.abs(total_signed_area_on_slice_mm2)
+        total_area_on_slice_mm2 = total_signed_area_on_slice_mm2
+
+        total_volume_mm3 += total_area_on_slice_mm2 * structure_set.Image.ZRes
+
+    # Convert total volume from mm^3 to cm^3
+    total_volume_cc = total_volume_mm3 / 1000.0
+
+    return mask_3d.T
 
 ## where the magic happens ##
 
@@ -320,6 +438,8 @@ Image.np_voxel_locations = compute_voxel_points_matrix
 Dose.np_voxel_locations = compute_voxel_points_matrix
 
 Beam.np_set_fluence = set_fluence_nparray
+
+StructureSet.np_mask_for_structure_fast = make_contour_mask_fast
 
 # fixing some pythonnet confusion
 def get_editable_IonBeamParameters(beam):
