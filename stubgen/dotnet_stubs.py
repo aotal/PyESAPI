@@ -20,10 +20,10 @@ CORE PRINCIPLES:
 - Preserve actual pythonnet runtime behavior in generated stubs
 
 Usage:
-    python dotnet_stubsv3.py <dll_folder> [output_folder]
+    python dotnet_stubs.py <dll_folder> [output_folder]
     
 Example:
-    python dotnet_stubsv3.py "C:\Program Files\Varian\RTM\18.0\esapi\API" stubs_v3
+    python dotnet_stubs.py "C:\Program Files\Varian\RTM\18.0\esapi\API" stubs
 """
 
 import sys
@@ -99,6 +99,8 @@ class MethodInfo:
     is_constructor: bool = False
     is_generic: bool = False
     generic_parameters: List[str] = field(default_factory=list)
+    # Store original .NET parameter types for XML documentation lookup
+    original_parameter_types: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -654,19 +656,38 @@ class DllIntrospector:
         try:
             # Get all types from assembly
             assembly_types = assembly.GetTypes()
+            logger.info(f"Found {len(assembly_types)} total types in assembly {assembly.GetName().Name}")
+            
+            public_count = 0
+            skipped_count = 0
+            extracted_count = 0
             
             for net_type in assembly_types:
                 try:
+                    # Check if type is public
+                    if hasattr(net_type, 'IsPublic') and not net_type.IsPublic:
+                        continue
+                    
+                    public_count += 1
+                    
                     # Skip compiler-generated and private types
                     if self._should_skip_type(net_type):
+                        skipped_count += 1
+                        logger.debug(f"Skipping type: {net_type.FullName}")
                         continue
                     
                     type_info = self._extract_type_info(net_type)
                     if type_info:
                         types[type_info.full_name] = type_info
+                        extracted_count += 1
+                        logger.debug(f"Extracted type: {type_info.full_name}")
+                    else:
+                        logger.debug(f"Failed to extract type info for: {net_type.FullName}")
                         
                 except Exception as e:
                     logger.debug(f"Failed to extract type info for {net_type}: {e}")
+            
+            logger.info(f"Assembly {assembly.GetName().Name}: {public_count} public types, {skipped_count} skipped, {extracted_count} extracted")
                     
         except Exception as e:
             logger.debug(f"Failed to get types from assembly {assembly}: {e}")
@@ -747,6 +768,8 @@ class DllIntrospector:
             simple_name = net_type.Name
             namespace = net_type.Namespace or ""
             
+            logger.debug(f"Processing type: {full_name}")
+            
             # Handle nested types
             if '+' in full_name:
                 full_name = full_name.replace('+', '.')
@@ -760,6 +783,8 @@ class DllIntrospector:
             is_interface = hasattr(net_type, 'IsInterface') and net_type.IsInterface  
             is_enum = hasattr(net_type, 'IsEnum') and net_type.IsEnum
             is_struct = hasattr(net_type, 'IsValueType') and net_type.IsValueType and not is_enum
+            
+            logger.debug(f"Type {full_name}: class={is_class}, interface={is_interface}, enum={is_enum}, struct={is_struct}")
             
             # Get base type
             base_type = None
@@ -799,10 +824,13 @@ class DllIntrospector:
             self._extract_fields(net_type, type_info)
             self._extract_constructors(net_type, type_info)
             
+            logger.debug(f"Successfully extracted type info for {full_name}")
             return type_info
             
         except Exception as e:
-            logger.debug(f"Failed to extract type info for {net_type}: {e}")
+            logger.warning(f"Failed to extract type info for {net_type}: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             return None
     
     def _extract_properties(self, net_type, type_info: TypeInfo):
@@ -862,7 +890,6 @@ class DllIntrospector:
 
     def _extract_methods(self, net_type, type_info: TypeInfo):
         """Extract method information"""
-        logger.debug(f"Considering method: {method.Name}, IsSpecialName: {method.IsSpecialName}, IsPublic: {method.IsPublic}, IsStatic: {method.IsStatic}")
         try:
             # Get all methods (public only, including inherited methods for complete API surface)
             binding_flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static
@@ -870,6 +897,8 @@ class DllIntrospector:
             
             for method in methods:
                 try:
+                    logger.debug(f"Considering method: {method.Name}, IsSpecialName: {method.IsSpecialName}, IsPublic: {method.IsPublic}, IsStatic: {method.IsStatic}")
+                    
                     # Use the filtering method to determine if this method should be included
                     if not self._should_include_method(method, type_info, self.docs):
                         continue
@@ -885,6 +914,10 @@ class DllIntrospector:
                     for param in method.GetParameters():
                         param_name = param.Name or f"param{param.Position}"
                         param_type = NetTypeToPythonConverter.convert_type(param.ParameterType)
+                        
+                        # Store original .NET type name for XML documentation lookup
+                        original_type_name = param.ParameterType.FullName or str(param.ParameterType)
+                        method_info.original_parameter_types.append(original_type_name)
                         
                         param_info = ParameterInfo(
                             name=self._sanitize_identifier(param_name),
@@ -1701,7 +1734,7 @@ class PythonStubGenerator:
         
         # Generate fields as class variables
         for field_name, field_info in sorted(type_info.fields.items()):
-            lines.extend(self._generate_field_stub(field_info))
+            lines.extend(self._generate_field_stub(type_info, field_info))
         
         # Ensure class has at least one member
         if len(lines) <= 3:  # Just class def, docstring, and empty line
@@ -1730,6 +1763,15 @@ class PythonStubGenerator:
         for field_name, field_info in sorted(type_info.fields.items()):
             if field_info.is_static:
                 sanitized_field_name = self._sanitize_identifier(field_name)
+                
+                # Look up field documentation for enum values
+                field_doc_key = f"{type_info.full_name}.{field_info.name}"
+                doc_info = self.docs.get(field_doc_key)
+                
+                # Add documentation comment if available
+                if doc_info and doc_info.summary:
+                    lines.append(f"    # {doc_info.summary}")
+                
                 lines.append(f"    {sanitized_field_name}: {type_info.simple_name}")
         
         if not type_info.fields:
@@ -1801,7 +1843,13 @@ class PythonStubGenerator:
                 lines.append(f"    def {prop_name}(cls, value: {prop_info.type_str}) -> None:")
             else:
                 lines.append(f"    def {prop_name}(self, value: {prop_info.type_str}) -> None:")
-            lines.append("        \"\"\"Set property value.\"\"\"")
+            
+            # Use the same documentation for setter as getter, but modify it slightly
+            if doc_info and doc_info.summary:
+                setter_docstring = f'"""Set {prop_info.type_str}: {doc_info.summary}"""'
+            else:
+                setter_docstring = f'"""Set {prop_info.type_str}: Property setter."""'
+            lines.append(f"        {setter_docstring}")
             lines.append("        ...")
         
         return lines
@@ -1849,20 +1897,42 @@ class PythonStubGenerator:
         params_str = ", ".join(params)
         lines.append(f"    def {method_name}({params_str}) -> {method_info.return_type_str}:")
         
-        # Method docstring
-        method_doc_key = f"{type_info.full_name}.{method_info.name}"
+        # Method docstring - build documentation key with parameter types for overload support
+        if method_info.original_parameter_types:
+            # Build full method signature for XML documentation lookup (like XML format)
+            param_types_str = ",".join(method_info.original_parameter_types)
+            method_doc_key = f"{type_info.full_name}.{method_info.name}({param_types_str})"
+        else:
+            # Fallback to simple key for parameterless methods
+            method_doc_key = f"{type_info.full_name}.{method_info.name}"
+        
         doc_info = self.docs.get(method_doc_key)
+        
+        # If no exact match found, try simple key as fallback
+        if not doc_info:
+            simple_key = f"{type_info.full_name}.{method_info.name}"
+            doc_info = self.docs.get(simple_key)
+        
         docstring = DocstringGenerator.generate_method_docstring(method_info, doc_info)
         lines.append(f"        {docstring}")
         lines.append("        ...")
         
         return lines
     
-    def _generate_field_stub(self, field_info: FieldInfo) -> List[str]:
-        """Generate field stub as class variable"""
+    def _generate_field_stub(self, type_info: TypeInfo, field_info: FieldInfo) -> List[str]:
+        """Generate field stub as class variable with documentation"""
         lines = []
         
         field_name = self._sanitize_identifier(field_info.name)
+        
+        # Look up field documentation
+        field_doc_key = f"{type_info.full_name}.{field_info.name}"
+        doc_info = self.docs.get(field_doc_key)
+        
+        # Add documentation comment if available
+        if doc_info and doc_info.summary:
+            # Add docstring comment above the field annotation
+            lines.append(f"    # {doc_info.summary}")
         
         if field_info.is_static:
             lines.append(f"    {field_name}: {field_info.type_str}")
