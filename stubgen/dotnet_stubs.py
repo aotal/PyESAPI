@@ -854,11 +854,15 @@ class DllIntrospector:
         if '.' in method_name and not method_name.startswith('op_'):
             return False
         
+        if method_name.startswith('op_'):
+            return True
+
         # Since we're only getting public methods now, include all remaining methods
-        return True
+        return not method.IsSpecialName
 
     def _extract_methods(self, net_type, type_info: TypeInfo):
         """Extract method information"""
+        logger.debug(f"Considering method: {method.Name}, IsSpecialName: {method.IsSpecialName}, IsPublic: {method.IsPublic}, IsStatic: {method.IsStatic}")
         try:
             # Get all methods (public only, including inherited methods for complete API surface)
             binding_flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static
@@ -1211,8 +1215,13 @@ class ImportTracker:
             return
             
         # Handle typing imports
-        if type_str in {'Any', 'List', 'Dict', 'Optional', 'Union', 'Generic', 'Callable', 'Tuple', 'Set'}:
+        if type_str in {'Any', 'List', 'Dict', 'Optional', 'Union', 'Generic', 'Callable', 'Tuple', 'Set', 'TypeVar'}:
             self.typing_imports.add(type_str)
+            return
+            
+        # Handle generic type parameters (T, T1, T2, etc.)
+        if re.match(r'^T\d*$', type_str):
+            self.typing_imports.add('TypeVar')
             return
             
         # Handle datetime imports
@@ -1321,6 +1330,30 @@ class ImportTracker:
 class PythonStubGenerator:
     """Generates Python stub files from type information"""
     
+    OPERATOR_TO_MAGIC_METHOD = {
+        'op_Addition': '__add__',
+        'op_Subtraction': '__sub__',
+        'op_Multiply': '__mul__',
+        'op_Division': '__truediv__',
+        'op_Modulus': '__mod__',
+        'op_Equality': '__eq__',
+        'op_Inequality': '__ne__',
+        'op_LessThan': '__lt__',
+        'op_GreaterThan': '__gt__',
+        'op_LessThanOrEqual': '__le__',
+        'op_GreaterThanOrEqual': '__ge__',
+        'op_BitwiseAnd': '__and__',
+        'op_BitwiseOr': '__or__',
+        'op_ExclusiveOr': '__xor__',
+        'op_UnaryNegation': '__neg__',
+        'op_UnaryPlus': '__pos__',
+        'op_Increment': '__inc__',
+        'op_Decrement': '__dec__',
+        'op_LogicalNot': '__not__',
+        'op_LeftShift': '__lshift__',
+        'op_RightShift': '__rshift__',
+    }
+
     def __init__(self, type_infos: Dict[str, TypeInfo], docs: Dict[str, DocumentationInfo]):
         self.type_infos = type_infos
         self.docs = docs
@@ -1461,6 +1494,12 @@ class PythonStubGenerator:
         
         # Comprehensive typing imports needed for stubs
         typing_imports = {'Any', 'List', 'Dict', 'Optional', 'Union', 'Generic', 'overload'}
+        
+        # Check if any types in this namespace are generic and need TypeVar
+        has_generic_types = any(type_info.is_generic and type_info.generic_parameters for type_info in types)
+        if has_generic_types:
+            typing_imports.add('TypeVar')
+        
         datetime_imports = {'datetime'}
         system_imports = {}  # namespace -> set of types
         cross_namespace_imports = {}  # namespace -> set of types
@@ -1569,6 +1608,22 @@ class PythonStubGenerator:
         import_lines = self._generate_imports_for_namespace(namespace, types)
         lines.extend(import_lines)
         lines.append("")
+        
+        # Collect all generic type parameters used in this module
+        type_vars_needed = set()
+        for type_info in types:
+            if type_info.is_generic and type_info.generic_parameters:
+                for i, param in enumerate(type_info.generic_parameters):
+                    if i == 0:
+                        type_vars_needed.add('T')
+                    else:
+                        type_vars_needed.add(f'T{i}')
+        
+        # Generate TypeVar declarations if needed
+        if type_vars_needed:
+            for type_var in sorted(type_vars_needed):
+                lines.append(f"{type_var} = TypeVar('{type_var}')")
+            lines.append("")
         
         # Generate type stubs
         for type_info in sorted(types, key=lambda t: t.simple_name):
@@ -1779,6 +1834,7 @@ class PythonStubGenerator:
             lines.append("    @staticmethod")
         
         # Sanitize method name
+        method_name = self.OPERATOR_TO_MAGIC_METHOD.get(method_info.name, method_info.name)
         method_name = self._sanitize_identifier(method_info.name)
         
         # Build parameter list
