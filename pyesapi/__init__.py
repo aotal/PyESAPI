@@ -146,7 +146,7 @@ def image_to_nparray(image_like):
     scale = x2 - x1
     slope = 1 / scale
     intercept = -x1 / scale
-    _array = _array * slope + intercept
+    _array = _array * slope - intercept
 
     return _array
 
