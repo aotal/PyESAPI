@@ -1,71 +1,73 @@
-# PyESAPI
-"Pi-e-Sappy" for research use only.
+# PyESAPI Service
 
-A passion project to help accelerate breakthroughs in medical physics research by bringing the power of Python into the Varian API ecosystem.
-PyESAPI combined with Jupyter Notebook gives you a "command line to Eclipse" allowing you to rapidly prototype your ESAPI scripts or research ideas.
+A high-performance **FastAPI** application for accessing Varian **ESAPI** (Eclipse Scripting API) over HTTP.
+Built with **uv** for blazing fast dependency management.
 
-## Quick Start (updated July 17th 2024)
+## 🚀 Key Features
 
-* Access your Eclipse 15.5 (or later) TBOX desktop or Varian Innovation Center environment
-* Install Python 3.10 or later from: https://www.python.org/downloads/
-  * Be sure to check the option to "add python.exe to PATH" (unless you are already managing multiple versions of Python)
-  * Note: If you use an older version of Python, your milage may vary.
-* Launch "Command Prompt" by searching in Windows menu
-* Navigate to a directory where you would like to store your first PyESAPI project using the `cd` command
-* In the prompt, execute the commands:
-  * `pip install pyesapi`
-  * `pip install jupyter`
-* Then execute the command `jupyter notebook`
-* Create a new notebook and see below for examples (if you are using a python virtual environment, be sure not to select "root" kernel).
+- **FastAPI Powered**: Modern, async-ready REST API.
+- **Worker Thread Pattern**: Solves ESAPI's Single-Threaded Apartment (STA) constraints gracefully.
+- **Data Access**: Endpoints for extracting Patient, Plan, and Dose data.
+- **Hot Reload**: Seamless development experience.
 
-## Examples
-### Jupyter Notebooks (from Developer Workshop 2018)
-  * [Getting Started](http://nbviewer.jupyter.org/github/VarianAPIs/PyESAPI/blob/master/examples/DeveloperWorkshop2018/GettingStarted.ipynb)
-  * [Data Mining](http://nbviewer.jupyter.org/github/VarianAPIs/PyESAPI/blob/master/examples/DeveloperWorkshop2018/DataMining.ipynb)
-  * [10xResearch](http://nbviewer.jupyter.org/github/VarianAPIs/PyESAPI/blob/master/examples/DeveloperWorkshop2018/10xResearch.ipynb)
-* Stand-alone python script: [standalone.py](examples/standalone.py)
+## 🛠️ Project Structure
 
-## Additional Resources
-PyESAPI wraps the official ESAPI interface, so a majority of the guidance on ESAPI caries over.
-* "Online" Help documentation in Eclipse External Beam (under question mark menu in upper right-hand side of the window)
-  * ![image](https://github.com/user-attachments/assets/f749caca-ae32-4e2d-9138-8e3c0eefb8bb)
+This project has been refactored from a script collection into a structured application:
 
-* [Varian API Book](https://varianapis.github.io/VarianApiBook.pdf) - contributions from the usual suspects
-* [ESAPI Code Samples](https://github.com/VarianAPIs/Varian-Code-Samples) - full ESAPI projects from previous workshops
-* [ESAPI Subreddit](https://www.reddit.com/r/esapi/) - active ESAPI community
-
-## Known issues
-* PyESAPI is not compatible with vscode-jupyter plugin which uses multithreading. ESAPI only allows for single-thread access to objects.
-* Python 3.12 may require Microsoft Visual C++ 14.0 or greater. If you are using a VIC environment, you can get it with "Microsoft C++ Build Tools": https://visualstudio.microsoft.com/visual-cpp-build-tools/
-  * Note: anaconda provieds pre-built binaries for popular packages.
-
-## Upgrading
-* `pip install --upgrade pysapi`
-  * This will check and upgrade PyESAPI if a newer version is available
-
-## Recommended tooling:
-Now that you've had a chance to explore the capabilities of PyESAPI, it's time to get more organized. Below are some recommendations on platforms and software to develop with.
-  * Varian Innovation Center Eclipse environment (or local TBOX)
-  * VisualStudio Code (lightweight IDE)
-  * Google Chrome or Microsoft Edge set as default browser (for better Jupyter Notebook experience)
-  * Git or GitHub Desktop (code repository and open source collaboration)
-
-# Development Notes
-For those wishing to contribute to PyESAPI or use PyESAPI with pre-released local builds of Eclipse.
-
-## Custom ESAPI DLL path
-Set custom ESAPI_PATH (to DLLs) before import (bypasses production directory path search)
-```python
-import os
-os.environ['ESAPI_PATH'] = r'C:\Users\CoolKid\Source\Magic\Bin\Debug64'
-import pyesapi
-# ...
+```text
+pyesapi/
+├── app/
+│   ├── main.py              # Application Entry Point
+│   ├── routers/             # API Route Handlers (e.g., aria.py)
+│   ├── services/            # Business Logic & ESAPI Worker
+│   └── core/                # Config & Logging
+├── docs/
+│   └── architecture.md      # Detailed Threading Model documentation
+├── pyesapi/                 # (Internal) PyESAPI library wrappers
+├── pyproject.toml           # UV/Python dependencies
+└── uv.lock                  # Dependency lock file
 ```
 
-## Stub Gen (experimental/under construction)
-To create lintable code and enable code completion (in Visual Studio Code at least) we can generate python stubs for ESAPI libs using IronPython...
-1. [Download](https://ironpython.net/download/) and install IronPython (2.7.9 tested to work) in default location (C:\Program Files\IronPython 2.7\ipy.exe).
-1. Load ironpython-stubs submodule `git submodule update --init` (ironstubs)
-1. Move to stubgen folder `cd stubgen`
-1. Execute script `stubgen.ps1` (if you hit a Pdb prompt, type continue)
-1. Commit updates to stubs folder
+## ⚡ Quick Start
+
+### Prerequisites
+
+- **Windows OS** (Required by Varian ESAPI)
+- **Python 3.11+**
+- **[uv](https://github.com/astral-sh/uv)** installed.
+
+### Installation
+
+1. **Clone & Sync**:
+   ```powershell
+   git clone <repo-url>
+   cd pyesapi
+   uv sync
+   ```
+
+2. **Run Server**:
+   ```powershell
+   uv run uvicorn app.main:app --reload
+   ```
+   
+   The server will start at `http://127.0.0.1:8000`.
+
+### 📚 Documentation
+
+- **Swagger UI**: Visit `http://127.0.0.1:8000/docs` for interactive API testing.
+- **Architecture**: Read [docs/architecture.md](docs/architecture.md) to understand how we handle Varian's STA threading requirements.
+
+## 🧪 Testing
+
+We include endpoints to verify connectivity:
+
+- `GET /info`: Checks if ESAPI is loaded and returns the current user.
+- `GET /aria-test`: Performs a real DB query to fetch a sample of patients.
+
+## 📦 Dependencies
+
+Managed via `pyproject.toml`. Key libraries:
+- `fastapi`
+- `uvicorn`
+- `numpy`
+- `pythonnet` (via `pythoncom` for STA)

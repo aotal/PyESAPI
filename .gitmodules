@@ -1,4 +1,0 @@
-[submodule "ironpython-stubs"]
-	path = ironpython-stubs
-	url = https://github.com/fizxmike/ironpython-stubs.git
-
